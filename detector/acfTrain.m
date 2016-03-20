@@ -234,25 +234,51 @@ if( exist(crDir,'dir') && stage==0 )
   for i=1:n, fs{i}=[{opts.imreadf},fs(i),opts.imreadp]; end
   Is=cell(1,n); parfor i=1:n, Is{i}=feval(fs{i}{:}); end
 else
-  % sample windows from full images using sampleWins1()
-  hasGt=positive||isempty(opts.negImgDir); fs={opts.negImgDir};
-  if(hasGt), fs={opts.posImgDir,opts.posGtDir}; end
-  fs=bbGt('getFiles',fs); nImg=size(fs,2); assert(nImg>0);
-  if(~isinf(n)), fs=fs(:,randperm(nImg)); end; Is=cell(nImg*1000,1);
-  diary('off'); tid=ticStatus('Sampling windows',1,30); k=0; i=0; batch=64;
-  while( i<nImg && k<n )
-    batch=min(batch,nImg-i); Is1=cell(1,batch);
-    parfor j=1:batch, ij=i+j;
-      I = feval(opts.imreadf,fs{1,ij},opts.imreadp{:}); %#ok<PFBNS>
-      gt=[]; if(hasGt), [~,gt]=bbGt('bbLoad',fs{2,ij},opts.pLoad); end
-      Is1{j} = sampleWins1( I, gt, detector, stage, positive );
+    % sample windows from full images using sampleWins1()
+    hasGt = positive || isempty(opts.negImgDir); 
+    fs={opts.negImgDir};
+    if(hasGt)
+        fs={opts.posImgDir,opts.posGtDir}; 
     end
-    Is1=[Is1{:}]; k1=length(Is1); Is(k+1:k+k1)=Is1; k=k+k1;
-    if(k>n), Is=Is(randSample(k,n)); k=n; end
-    i=i+batch; tocStatus(tid,max(i/nImg,k/n));
-  end
-  Is=Is(1:k); diary('on');
-  fprintf('Sampled %i windows from %i images.\n',k,i);
+	fs=bbGt('getFiles',fs); 
+	nImg=size(fs,2); 
+	assert(nImg>0);
+	if(~isinf(n))
+        fs=fs(:,randperm(nImg)); 
+	end; 
+	Is=cell(nImg*1000,1);
+	diary('off'); 
+	tid=ticStatus('Sampling windows',1,30); 
+	k=0; 
+	i=0; 
+	batch=64;
+    pLoad = opts.pLoad;
+	while( i<nImg && k<n )
+        batch=min(batch,nImg-i); 
+        Is1=cell(1,batch);
+        parfor j=1:batch
+            ij=i+j;
+            I = imread(fs{1,ij});
+            gt=[]; 
+            if(hasGt)
+                [~,gt]=bbGt('bbLoad',fs{2,ij},pLoad);
+            end
+            Is1{j} = sampleWins1(I, gt, detector, stage, positive);
+        end
+        Is1=[Is1{:}]; 
+        k1=length(Is1); 
+        Is(k+1:k+k1)=Is1; 
+        k=k+k1;
+        if(k>n)
+            Is=Is(randSample(k,n));
+            k=n;
+        end
+        i=i+batch; 
+        tocStatus(tid,max(i/nImg,k/n));
+	end
+    Is=Is(1:k); 
+    diary('on');
+    fprintf('Sampled %i windows from %i images.\n',k,i);
 end
 % optionally jitter positive windows
 if(length(Is)<2), Is={}; return; end
@@ -274,31 +300,51 @@ end
 
 function Is = sampleWins1( I, gt, detector, stage, positive )
 % Sample windows from I given its ground truth gt.
-opts=detector.opts; shrink=opts.pPyramid.pChns.shrink;
-modelDs=opts.modelDs; modelDsPad=opts.modelDsPad;
-if( positive ), bbs=gt; bbs=bbs(bbs(:,5)==0,:); else
-  if( stage==0 )
-    % generate candidate bounding boxes in a grid
-    [h,w,~]=size(I); h1=modelDs(1); w1=modelDs(2);
-    n=opts.nPerNeg; ny=sqrt(n*h/w); nx=n/ny; ny=ceil(ny); nx=ceil(nx);
-    [xs,ys]=meshgrid(linspace(1,w-w1,nx),linspace(1,h-h1,ny));
-    bbs=[xs(:) ys(:)]; bbs(:,3)=w1; bbs(:,4)=h1; bbs=bbs(1:n,:);
-  else
-    % run detector to generate candidate bounding boxes
-    bbs=acfDetect(I,detector); [~,ord]=sort(bbs(:,5),'descend');
-    bbs=bbs(ord(1:min(end,opts.nPerNeg)),1:4);
-  end
-  if( ~isempty(gt) )
-    % discard any candidate negative bb that matches the gt
-    n=size(bbs,1); keep=false(1,n);
-    for i=1:n, keep(i)=all(bbGt('compOas',bbs(i,:),gt,gt(:,5))<.1); end
-    bbs=bbs(keep,:);
-  end
+opts=detector.opts;
+shrink=opts.pPyramid.pChns.shrink;
+modelDs=opts.modelDs;
+modelDsPad=opts.modelDsPad;
+if( positive )
+    bbs=gt;
+    bbs=bbs(bbs(:,5)==0,:);
+else
+    if( stage==0 )
+        % generate candidate bounding boxes in a grid
+        [h,w,~]=size(I);
+        h1=modelDs(1);
+        w1=modelDs(2);
+        n=opts.nPerNeg;
+        ny=sqrt(n*h/w);
+        nx=n/ny;
+        ny=ceil(ny);
+        nx=ceil(nx);
+        [xs,ys]=meshgrid(linspace(1,w-w1,nx),linspace(1,h-h1,ny));
+        bbs=[xs(:) ys(:)];
+        bbs(:,3)=w1;
+        bbs(:,4)=h1;
+        bbs=bbs(1:n,:);
+    else
+        % run detector to generate candidate bounding boxes
+        bbs=acfDetect(I,detector);
+        [~,ord]=sort(bbs(:,5),'descend');
+        bbs=bbs(ord(1:min(end,opts.nPerNeg)),1:4);
+    end
+    if( ~isempty(gt) )
+        % discard any candidate negative bb that matches the gt
+        n=size(bbs,1);
+        keep=false(1,n);
+        for i=1:n
+            keep(i)=all(bbGt('compOas',bbs(i,:),gt,gt(:,5))<.1);
+        end
+        bbs=bbs(keep,:);
+    end
 end
 % grow bbs to a large padded size and finally crop windows
 modelDsBig=max(8*shrink,modelDsPad)+max(2,ceil(64/shrink))*shrink;
-r=modelDs(2)/modelDs(1); assert(all(abs(bbs(:,3)./bbs(:,4)-r)<1e-5));
-r=modelDsBig./modelDs; bbs=bbApply('resize',bbs,r(1),r(2));
+r=modelDs(2)/modelDs(1);
+assert(all(abs(bbs(:,3)./bbs(:,4)-r)<1e-5));
+r=modelDsBig./modelDs;
+bbs=bbApply('resize',bbs,r(1),r(2));
 Is=bbApply('crop',I,bbs,'replicate',modelDsBig([2 1]));
 end
 
